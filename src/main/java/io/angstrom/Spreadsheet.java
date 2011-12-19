@@ -47,27 +47,15 @@ public class Spreadsheet {
     }
 
     public void reduce() throws Exception {
-        process(null);
         System.out.println(String.format("%s %s", this.width, this.height));
-        final Set<String> keys = this.rows.keySet();
+        final Set<String> keys = rows.keySet();
         for (String key : keys) {
-            final Cell cell = this.rows.get(key);
-            System.out.println(String.format("%.5f", cell.getValue()));
-        }
-    }
-
-    private void process(final String key) throws Exception {
-        if (key == null) {
-            final Set<String> keys = rows.keySet();
-            for (String k : keys) {
-                process(k);
-            }
-        } else {
             final Cell cell = rows.get(key);
             if (cell.getValue() == null) {
                 cell.setValue(getNodeValue(key, null));
                 rows.put(key, cell);
             }
+            System.out.println(String.format("%.5f", cell.getValue()));
         }
     }
 
