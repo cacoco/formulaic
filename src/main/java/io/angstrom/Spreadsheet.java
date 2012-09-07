@@ -1,18 +1,17 @@
 package io.angstrom;
 
-import io.angstrom.util.Cell;
-import io.angstrom.util.Operator;
-
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.util.*;
 
 public class Spreadsheet {
-    private Map<String, Cell> rows = new TreeMap<String, Cell>();
+    private Map<String, String> rows = new TreeMap<String, String>();
     private int width, height = 0;
 
-    protected Spreadsheet(final boolean testOnly, final Map<String, Cell> rows) {
-        this.rows = rows == null ? new TreeMap<String, Cell>() : rows;
+    private Map<String, Float> __memoize = new HashMap<String, Float>();
+
+    protected Spreadsheet(final boolean testOnly, final Map<String, String> rows) {
+        this.rows = rows == null ? new TreeMap<String, String>() : rows;
         this.width = 0;
         this.height = 0;
     }
@@ -30,8 +29,7 @@ public class Spreadsheet {
             // map the cells
             char identifier = 'A'; // assume no more than 26 rows.
             for (int i = 1; i <= (this.width * this.height); i ++) {
-                final Cell cell = new Cell(data.get(i));
-                rows.put(String.format("%s%s", identifier, (colCount+1)), cell);
+                rows.put(String.format("%s%s", identifier, (colCount + 1)), data.get(i));
 
                 colCount++;
                 if (colCount == this.width) {
@@ -49,79 +47,68 @@ public class Spreadsheet {
     public void reduce() throws Exception {
         System.out.println(String.format("%s %s", this.width, this.height));
         final Set<String> keys = rows.keySet();
-        for (String key : keys) {
-            final Cell cell = rows.get(key);
-            if (cell.getValue() == null) {
-                cell.setValue(getNodeValue(key, null));
-                rows.put(key, cell);
-            }
-            System.out.println(String.format("%.5f", cell.getValue()));
+        for (final String key : keys) {
+            System.out.println(String.format("%.5f", evaluate(key, rows.get(key), new Stack<String>())));
         }
     }
 
-    protected Float getNodeValue(final String key, Set<String> visited) throws Exception {
-        if (visited == null) { visited = new HashSet<String>(); }
-        final Cell cell = rows.get(key);
-        if (cell == null) { throw new Exception("Invalid key=" + key); }
-
-        if (visited.contains(key) && cell.getValue() == null) {
-            System.out.println(String.format("Visited chain: %s", visited));
-            throw new Exception(String.format("Cyclical dependency detected -- we've been here before. Referenced:[%s]", key));
-        }
-        visited.add(key);
-
-        if (cell.getValue() != null) { return cell.getValue(); }
-        final Deque<String> expression = cell.getExpression();
-        Operator operator = null;
-        if (Operator.isOperator(expression.peek())) {
-            operator = Operator.getBySymbol(expression.pop());
-        }
-
-        return evaluate(visited, operator, expression);
-    }
-
-    protected Float evaluate(Set<String> visited, Operator operator, Deque<String> args) throws Exception {
-        final Stack<Float> operands = new Stack<Float>();
-
-        String key;
-        while ((key = args.poll()) != null) {
-            boolean increment = false;
-            boolean decrement = false;
-            // will only deal with postfix
-            if (key.endsWith("--")) {
-                key = key.substring(0, (key.length() - 2));
-                decrement = true;
-            } else if (key.endsWith("++")) {
-                key = key.substring(0, (key.length() - 2));
-                increment = true;
+    protected Float evaluate(final String key, final String line, final Stack<String> visited) throws Exception {
+        if (visited.contains(key)) {
+            final StringBuilder __sb = new StringBuilder(key);
+            for (String s : visited) {
+                __sb.append(String.format(" --> %s", s));
             }
-            if (Operator.isOperator(key)) {
-                // only pop the next two args for the operator
-                Deque<String> innerOp = new ArrayDeque<String>();
-                innerOp.add(args.pop());
-                innerOp.add(args.pop());
-                operands.add(evaluate(visited, Operator.getBySymbol(key), innerOp));
-            } else if (rows.containsKey(key)) {
-                Cell referenced = rows.get(key);
-                Float value = getNodeValue(key, visited);
-                if (referenced.getValue() == null) {
-                    referenced.setValue(value);
-                    rows.put(key, referenced);
-                }
-                if (decrement) { value--; }
-                if (increment) { value++; }
-                operands.add(value);
+            throw new Exception(
+                    String.format("Cyclical dependency detected -- we've been here before. Referenced:[%s]", __sb.toString()));
+        } else {
+            visited.push(key);
+        }
+        final Stack<Float> __operands = new Stack<Float>();
+
+        final StringTokenizer __tokenizer = new StringTokenizer(line);
+        while (__tokenizer.hasMoreTokens()) {
+            final String token = __tokenizer.nextToken();
+            if ("+".equals(token)) {
+                __operands.push(__operands.pop() + __operands.pop());
+            } else if ("-".equals(token)) {
+                __operands.push(__operands.pop() - __operands.pop());
+            } else if ("/".equals(token)) {
+                __operands.push(__operands.pop() / __operands.pop());
+            } else if ("*".equals(token)) {
+                __operands.push(__operands.pop() * __operands.pop());
             } else {
-                Float value = Float.parseFloat(key);
-                if (decrement) { value--; }
-                if (increment) { value++; }
-                operands.add(value);
+                try {
+                    __operands.push(Float.parseFloat(token));
+                } catch (NumberFormatException e) {
+                    boolean increment = false;
+                    boolean decrement = false;
+                    String cell = token;
+                    // references another cell
+                    if (token.endsWith("++")) {
+                        increment = true;
+                        cell = token.substring(0, token.length() - 2);
+                    } else if (token.endsWith("--")) {
+                        decrement = true;
+                        cell = token.substring(0, token.length() - 2);
+                    }
+                    // find other cell value, look to see if we've computed it before on a previous run
+                    Float value = __memoize.get(cell);
+                    if (value == null) {
+                        value = evaluate(cell, rows.get(cell), visited);
+                        visited.pop(); // we've evaluated the cell visited, pop it off
+                        // deal with increment and decrement
+                        if (increment) {
+                            value = value + 1;
+                        } else if (decrement) {
+                            value = value - 1;
+                        }
+                        __memoize.put(cell, value); // remember the value
+                    }
+                    __operands.push(value);
+                }
             }
         }
-        if (operator == null) {
-            return operands.get(0); // should only be one as there is no operator
-        }
-        return Operator.compute(operator, operands);
+        return __operands.pop();
     }
 
     public static void main(String[] args) {
@@ -129,9 +116,7 @@ public class Spreadsheet {
             final List<String> data = new ArrayList<String>();
             final BufferedReader in = new BufferedReader(new InputStreamReader(System.in));
             String line;
-            while ((line = in.readLine()) != null && line.length() != 0) {
-                data.add(line);
-            }
+            while ((line = in.readLine()) != null && line.length() != 0) { data.add(line); }
 
             long start = System.currentTimeMillis();
             final Spreadsheet spreadsheet = new Spreadsheet(data);
